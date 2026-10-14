@@ -32,6 +32,7 @@ import java.util.Objects;
 import jdk.graal.compiler.core.common.util.IntList;
 import jdk.graal.compiler.debug.GraalError;
 import jdk.graal.compiler.nodes.ControlSplitNode;
+import jdk.graal.compiler.nodes.LogicNode;
 import jdk.graal.compiler.nodes.ValueNode;
 import jdk.graal.compiler.nodes.ValuePhiNode;
 import jdk.vm.ci.meta.TriState;
@@ -389,6 +390,13 @@ public interface AnalysisDomainDefinition<ELEM_TYPE> {
      * {@link AnalysisDomainDefinition#transfer}.
      */
     default boolean isOfInterest(ValueNode node) {
+        if (node instanceof LogicNode ln) {
+            for (var i : ln.inputs()) {
+                if (!(i instanceof ValueNode v) || unevaluated(v) == null) {
+                    return false;
+                }
+            }
+        }
         return unevaluated(node) != null;
     }
 
