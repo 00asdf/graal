@@ -578,6 +578,11 @@ final class AnalysisInferenceHelper {
      * updated the dominance cache along the way.
      */
     private static <T> boolean checkTransitiveUsages(DFAnalysis<T> analysis, StringBuilder logBuilder, ValueNode usage, ValueNode value, HIRBlock targetBranch) {
+        if (DFAnalysis.Options.DFA_UseScheduleForDominance.getValue(analysis.debug.getOptions())) {
+            // all nodes except inferences have blocks
+            var schedule = analysis.graph.getLastSchedule();
+            return schedule.blockFor(targetBranch.getBeginNode()).dominates(schedule.blockFor(usage));
+        }
         return recursiveTransitiveCheck(analysis.dominanceCache, new NodeFlood(analysis.graph), usage, analysis, logBuilder, usage, value, targetBranch);
     }
 

@@ -36,6 +36,7 @@ import org.graalvm.collections.Pair;
 
 import jdk.graal.compiler.core.common.util.CompilationAlarm;
 import jdk.graal.compiler.core.common.util.IntList;
+import jdk.graal.compiler.debug.CounterKey;
 import jdk.graal.compiler.debug.DebugContext;
 import jdk.graal.compiler.debug.GraalError;
 import jdk.graal.compiler.graph.Node;
@@ -62,6 +63,8 @@ import jdk.graal.compiler.options.OptionType;
 import jdk.graal.compiler.phases.BasePhase;
 import jdk.graal.compiler.phases.dfanalysis.DFEdgeMap.CFGEdge;
 import jdk.graal.compiler.phases.dfanalysis.DFEdgeMap.Reachability;
+import jdk.graal.compiler.phases.schedule.SchedulePhase;
+import jdk.graal.compiler.util.EconomicHashSet;
 
 /**
  * <p>
@@ -179,8 +182,29 @@ public final class DFAnalysis<T> {
         public static final OptionKey<Boolean> DFA_PreCanonicalize = new OptionKey<>(false);
 
         @Option(help = "Runs the Analysis on all compilation units, not only units with loops", type = OptionType.Debug)
-        public static final OptionKey<Boolean> DFA_EvalAll = new OptionKey<>(false);
+        public static final OptionKey<Boolean> DFA_EvalAll = new OptionKey<>(true);
+
+        @Option(help = "Runs the Analysis on all compilation units, not only units with loops", type = OptionType.Debug)
+        public static final OptionKey<Boolean> DFA_ScheduleAll = new OptionKey<>(false);
+
+        @Option(help = "Runs the Analysis on all compilation units, not only units with loops", type = OptionType.Debug)
+        public static final OptionKey<Boolean> DFA_CalcSchedule = new OptionKey<>(false);
+
+        @Option(help = "Runs the Analysis on all compilation units, not only units with loops", type = OptionType.Debug)
+        public static final OptionKey<Boolean> DFA_FullNodePrios = new OptionKey<>(false);
+
+        @Option(help = "Runs the Analysis on all compilation units, not only units with loops", type = OptionType.Debug)
+        public static final OptionKey<Boolean> DFA_UseScheduleForDominance = new OptionKey<>(false);
     }
+
+    private static final CounterKey nodesCnt = DebugContext.counter("DF_NODES_CNT");
+    private static final CounterKey valueNodesCnt = DebugContext.counter("DF_VALUE_NODES_CNT");
+    private static final CounterKey nodesSeen = DebugContext.counter("DF_NODES_SEEN");
+    private static final CounterKey evalCnt = DebugContext.counter("DF_EVAL_CNT");
+    public static final CounterKey constantCnt = DebugContext.counter("DF_CONSTANT_CNT");
+    private static final CounterKey blocksCnt = DebugContext.counter("DF_BLOCKS_CNT");
+    private static final CounterKey blocksUnreachable = DebugContext.counter("DF_BLOCKS_UNREACHABLE");
+
 
     /**
      * Most control splits are binary, therefore we preallocate FALSE_FALSE to use in the case of an
@@ -213,7 +237,7 @@ public final class DFAnalysis<T> {
         this.graph = graph;
         debug = graph.getDebug();
         this.cfg = cfg;
-        workList = new WorkList(cfg, debug);
+        workList = Options.DFA_FullNodePrios.getValue(graph.getOptions()) ? new FullWorkList(graph) : new WorkListImpl(cfg, debug);
         elemMap = new DFAMap<>(elementType, this, Options.DFA_RecordTrace.getValue(graph.getOptions()));
         edgeMap = new DFEdgeMap<>(this, domain);
         this.domain = domain;
@@ -228,9 +252,20 @@ public final class DFAnalysis<T> {
 
     public static <T> DFAnalysis<T> create(Class<T> elementType, StructuredGraph graph, AnalysisDomainDefinition<T> analysisDefinition,
                     NodePredicate isStartingPoint) {
+        if (Options.DFA_CalcSchedule.getValue(graph.getOptions())
+                || Options.DFA_FullNodePrios.getValue(graph.getOptions())
+                || Options.DFA_UseScheduleForDominance.getValue(graph.getOptions())) {
+            try (DebugContext.Scope ignore = graph.getDebug().scope("DFSchedule")) {
+                SchedulePhase.runWithoutContextOptimizations(graph, SchedulePhase.SchedulingStrategy.LATEST);
+            }
+        }
         ControlFlowGraph cfg = new ControlFlowGraphBuilder(graph).connectBlocks(true).computeDominators(true).build();
         DFAnalysis<T> analysis = new DFAnalysis<>(elementType, graph, cfg, analysisDefinition);
-        analysis.workList.initialize(graph, isStartingPoint);
+        if (Options.DFA_ScheduleAll.getValue(graph.getOptions())) {
+            analysis.workList.initialize(graph, n -> n instanceof ValueNode v && analysisDefinition.isOfInterest(v));
+        } else {
+            analysis.workList.initialize(graph, isStartingPoint);
+        }
         return analysis;
     }
 
@@ -268,10 +303,26 @@ public final class DFAnalysis<T> {
         try (DebugContext.Scope ignore = debug.scope("DFAnalysis")) {
             debug.dump(DebugContext.DETAILED_LEVEL, graph, "before DFAnalysis");
 
+            if (nodesCnt.isEnabled(debug)) {
+                nodesCnt.add(debug, graph.getNodeCount());
+            }
+            if (valueNodesCnt.isEnabled(debug)) {
+                valueNodesCnt.add(debug, graph.getNodes().filter(ValueNode.class).count());
+            }
+            if (blocksCnt.isEnabled(debug)) {
+                blocksCnt.add(debug, cfg.getBlocks().length);
+            }
+
+            long evals = 0;
+            var seenNodes = nodesSeen.isEnabled(debug) ? new EconomicHashSet<Node>() : null;
             // main analysis loop, iterates until a fixed point is reached
             while (workList.hasNext()) {
                 CompilationAlarm.checkProgress(graph);
                 ValueNode node = workList.next();
+                evals++;
+                if (seenNodes != null) {
+                    seenNodes.add(node);
+                }
                 debug.log(DebugContext.VERY_DETAILED_LEVEL, "processing node %s", node);
                 if (node instanceof AbstractMergeNode merge) {
                     handleMergeNode(merge);
@@ -289,6 +340,21 @@ public final class DFAnalysis<T> {
                 } else if (node instanceof FixedNode fixed && isLastNodeInBlock(cfg, fixed)) {
                     propagateReachability(fixed);
                 }
+            }
+
+            evalCnt.add(debug, evals);
+            if (seenNodes != null) {
+                nodesSeen.add(debug, seenNodes.size());
+            }
+
+            if (blocksUnreachable.isEnabled(debug)) {
+                int unreachBlocks = 0;
+                for (var b : cfg.getBlocks()) {
+                    if (!mayBeReachable(b)) {
+                        unreachBlocks++;
+                    }
+                }
+                blocksUnreachable.add(debug, unreachBlocks);
             }
 
             /*
@@ -505,7 +571,9 @@ public final class DFAnalysis<T> {
                  * this node has changed and the inferred facts need to be recalculated if the
                  * inputs of the generating node have changed.
                  */
-                AnalysisInferenceHelper.generateInferredFacts(this, node);
+                try (DebugContext.Scope ignore = debug.scope("DFInference")) {
+                    AnalysisInferenceHelper.generateInferredFacts(this, node);
+                }
             }
         }
 

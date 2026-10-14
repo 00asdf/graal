@@ -169,10 +169,12 @@ public final class StampAnalysisPhase extends PostRunCanonicalizationPhase<CoreP
 
     private void processResults(StructuredGraph graph, DFAMap<Stamp> results) {
         MapCursor<ValueNode, Stamp> stampCursor = results.getEntries();
+        int constantsFound = 0;
         while (stampCursor.advance()) {
             ValueNode node = stampCursor.getKey();
             Stamp stamp = stampCursor.getValue();
             if (stamp.isConstant() && !(node instanceof ConstantNode || node instanceof LogicConstantNode)) {
+                constantsFound++;
                 if (!Options.DFSA_DoTypes.getValue(graph.getOptions()) && stamp instanceof AbstractObjectStamp constantObjectStamp) {
                     if (node.stamp(NodeView.DEFAULT) instanceof AbstractObjectStamp curStamp) {
                         /*
@@ -205,6 +207,8 @@ public final class StampAnalysisPhase extends PostRunCanonicalizationPhase<CoreP
                 }
             }
         }
+
+        DFAnalysis.constantCnt.add(graph.getDebug(), constantsFound);
         graph.getDebug().dump(DebugContext.DETAILED_LEVEL, graph, "After constant replacement");
     }
 

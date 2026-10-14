@@ -358,7 +358,7 @@ public final class GraalOptions {
     public static final OptionKey<Boolean> TraceThreadedSwitchOptimization = new OptionKey<>(false);
 
     @Option(help = "Enables conditional constant propagation phase", type = OptionType.Debug)
-    public static final OptionKey<Boolean> ConditionalConstantPropagation = new OptionKey<>(true);
+    public static final OptionKey<Boolean> ConditionalConstantPropagation = new OptionKey<>(false);
 
     @Option(help = "Enables phase for optimistic reasoning using stamps", type = OptionType.Debug)
     public static final OptionKey<Boolean> FullStampAnalysis = new OptionKey<>(false);

@@ -173,10 +173,12 @@ public final class LSCCPPhase extends PostRunCanonicalizationPhase<CoreProviders
 
     private void processResults(StructuredGraph graph, DFAMap<Stamp> results) {
         MapCursor<ValueNode, Stamp> stampCursor = results.getEntries();
+        int constantsFound = 0;
         while (stampCursor.advance()) {
             ValueNode node = stampCursor.getKey();
             Stamp stamp = stampCursor.getValue();
             if (stamp.isConstant() && !(node instanceof ConstantNode || node instanceof LogicConstantNode)) {
+                constantsFound++;
                 if (stamp instanceof LogicValueStamp logicStamp) {
                     graph.getDebug().log(DebugContext.VERY_DETAILED_LEVEL, "replacing %s with constant %s", node, stateForLogicStamp(logicStamp));
                     node.replaceAtUsagesAndDelete(LogicConstantNode.forBoolean(stateForLogicStamp(logicStamp).toBoolean(), graph));
@@ -207,6 +209,8 @@ public final class LSCCPPhase extends PostRunCanonicalizationPhase<CoreProviders
                 }
             }
         }
+
+        DFAnalysis.constantCnt.add(graph.getDebug(), constantsFound);
 
         graph.getDebug().dump(DebugContext.DETAILED_LEVEL, graph, "After constant replacement");
     }

@@ -138,7 +138,7 @@ public final class DFAMap<LE_TYPE> {
      * if a value for any of its (possibly indirect) inputs changes.
      */
     public void registerPattern(ValueNode patternOut, ValueNode upperNode) {
-        analysis.workList.patternInputs.computeIfAbsent(upperNode, k -> new EconomicHashSet<>()).add(patternOut);
+        analysis.workList.patternInputs().computeIfAbsent(upperNode, k -> new EconomicHashSet<>()).add(patternOut);
     }
 
     public void registerPattern(ValueNode patternOut, ValueNode upperNode1, ValueNode upperNode2) {

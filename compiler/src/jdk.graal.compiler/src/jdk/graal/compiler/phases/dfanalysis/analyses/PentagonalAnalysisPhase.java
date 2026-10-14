@@ -132,7 +132,7 @@ public final class PentagonalAnalysisPhase extends PostRunCanonicalizationPhase<
         public static final OptionKey<Boolean> PA_UseNonNullObjConstants = new OptionKey<>(true);
 
         @Option(help = "Enables type tracking for object stamps", type = OptionType.Debug)
-        public static final OptionKey<Boolean> PA_TrackTypes = new OptionKey<>(true);
+        public static final OptionKey<Boolean> PA_TrackTypes = new OptionKey<>(false);
         // @formatter:on
     }
 
@@ -1512,6 +1512,7 @@ public final class PentagonalAnalysisPhase extends PostRunCanonicalizationPhase<
             }
         }
 
+        DFAnalysis.constantCnt.add(graph.getDebug(), constantsFound);
         graph.getDebug().dump(DebugContext.DETAILED_LEVEL, graph, "After constant replacement");
     }
 
